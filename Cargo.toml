@@ -1,0 +1,10 @@
+[package]
+name = "imgmeta-lint"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A linter for image metadata that reports findings with line numbers"
+
+[[bin]]
+name = "imgmeta-lint"
+path = "src/main.rs"
