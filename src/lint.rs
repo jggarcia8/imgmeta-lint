@@ -1,4 +1,5 @@
 use crate::jpeg::ExifData;
+use crate::png::PngText;
 
 pub enum Severity {
     Error,
@@ -83,6 +84,24 @@ pub fn check(exif: &ExifData) -> Vec<Finding> {
             line: 0,
             severity: Severity::Info,
             message: "no Copyright tag present".to_string(),
+        });
+    }
+
+    findings
+}
+
+pub fn check_png(text: &PngText) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    let has_copyright = text
+        .fields
+        .iter()
+        .any(|f| f.keyword.eq_ignore_ascii_case("copyright"));
+    if !has_copyright {
+        findings.push(Finding {
+            line: 0,
+            severity: Severity::Info,
+            message: "no Copyright text chunk present".to_string(),
         });
     }
 
