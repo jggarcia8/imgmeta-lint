@@ -66,8 +66,13 @@ audit.
 - PNG tEXt, zTXt, and iTXt chunks, decompressed with a small built-in
   DEFLATE implementation. Only a Copyright presence check runs against
   them so far.
-- No XMP or IPTC support yet, and no PNG eXIf chunk support (PNG can carry
-  a full EXIF block of its own).
+- XMP packets, in both formats: the APP1 block in JPEG and the
+  `XML:com.adobe.xmp` iTXt chunk in PNG. Checked against the same GPS and
+  date-quality rules as EXIF, using a small text scan rather than a full
+  XML parser (`exif:GPSLatitude`/`GPSLongitude`, `exif:DateTimeOriginal`,
+  `xmp:CreateDate`).
+- No IPTC support yet, and no PNG eXIf chunk support (PNG can carry a
+  full EXIF block of its own).
 
 ## License
 

@@ -1,7 +1,12 @@
-// Walks JPEG segments looking for an APP1/Exif block, then decodes the
-// handful of IFD0 tags the linter currently understands. Each decoded
-// tag is numbered in the order it appears in the IFD so that findings
-// can point back at it (see `--dump`).
+// Walks JPEG segments looking for an APP1/Exif block and an APP1/XMP
+// block, then decodes the handful of IFD0 tags the linter currently
+// understands plus the XMP properties in xmp.rs. Each decoded EXIF tag
+// is numbered in the order it appears in the IFD so that findings can
+// point back at it (see `--dump`).
+
+use crate::xmp::XmpData;
+
+const XMP_SIGNATURE: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 
 pub struct Field {
     pub tag: u16,
@@ -13,6 +18,7 @@ pub struct Field {
 pub struct ExifData {
     pub fields: Vec<Field>,
     pub has_gps: bool,
+    pub xmp: Option<XmpData>,
 }
 
 pub enum ParseError {
@@ -26,6 +32,11 @@ pub fn parse_jpeg(data: &[u8]) -> Result<Option<ExifData>, ParseError> {
     }
 
     let mut pos = 2usize;
+    let mut fields = Vec::new();
+    let mut has_gps = false;
+    let mut xmp = None;
+    let mut found_exif = false;
+
     while pos + 2 <= data.len() {
         if data[pos] != 0xFF {
             pos += 1; // resync past stray fill bytes
@@ -51,10 +62,19 @@ pub fn parse_jpeg(data: &[u8]) -> Result<Option<ExifData>, ParseError> {
         }
         let payload = &data[pos + 4..pos + 2 + seg_len];
 
-        if marker == 0xE1 && payload.len() >= 6 && &payload[0..6] == b"Exif\0\0" {
-            if let Some(exif) = parse_exif(&payload[6..]) {
-                return Ok(Some(exif));
+        if marker == 0xE1 && !found_exif && payload.len() >= 6 && &payload[0..6] == b"Exif\0\0" {
+            found_exif = true;
+            if let Some((f, gps)) = parse_exif(&payload[6..]) {
+                fields = f;
+                has_gps = gps;
             }
+        } else if marker == 0xE1
+            && xmp.is_none()
+            && payload.len() >= XMP_SIGNATURE.len()
+            && &payload[..XMP_SIGNATURE.len()] == XMP_SIGNATURE
+        {
+            let xml = String::from_utf8_lossy(&payload[XMP_SIGNATURE.len()..]);
+            xmp = Some(crate::xmp::parse(&xml));
         }
 
         if marker == 0xDA {
@@ -63,10 +83,14 @@ pub fn parse_jpeg(data: &[u8]) -> Result<Option<ExifData>, ParseError> {
         pos += 2 + seg_len;
     }
 
-    Ok(None)
+    if fields.is_empty() && xmp.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(ExifData { fields, has_gps, xmp }))
+    }
 }
 
-fn parse_exif(tiff: &[u8]) -> Option<ExifData> {
+fn parse_exif(tiff: &[u8]) -> Option<(Vec<Field>, bool)> {
     if tiff.len() < 8 {
         return None;
     }
@@ -122,7 +146,7 @@ fn parse_exif(tiff: &[u8]) -> Option<ExifData> {
         fields.push(Field { tag, name, value, line });
     }
 
-    Some(ExifData { fields, has_gps })
+    Some((fields, has_gps))
 }
 
 fn decode_value(tiff: &[u8], typ: u16, count: usize, raw: &[u8], le: bool) -> String {

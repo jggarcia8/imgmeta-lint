@@ -2,6 +2,7 @@ mod inflate;
 mod jpeg;
 mod lint;
 mod png;
+mod xmp;
 
 use std::env;
 use std::fs;

@@ -1,5 +1,6 @@
 use crate::jpeg::ExifData;
 use crate::png::PngText;
+use crate::xmp::{self, XmpData};
 
 pub enum Severity {
     Error,
@@ -27,13 +28,15 @@ pub struct Finding {
 pub fn check(exif: &ExifData) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    if exif.has_gps {
+    let xmp_has_gps = exif.xmp.as_ref().is_some_and(|x| x.has_gps);
+    if exif.has_gps || xmp_has_gps {
         findings.push(Finding {
             line: 0,
             severity: Severity::Warning,
             message: "file embeds GPS coordinates; strip before sharing publicly".to_string(),
         });
     }
+    check_xmp_date(exif.xmp.as_ref(), &mut findings);
 
     let mut has_datetime = false;
     let mut has_copyright = false;
@@ -105,7 +108,31 @@ pub fn check_png(text: &PngText) -> Vec<Finding> {
         });
     }
 
+    if text.xmp.as_ref().is_some_and(|x| x.has_gps) {
+        findings.push(Finding {
+            line: 0,
+            severity: Severity::Warning,
+            message: "file embeds GPS coordinates; strip before sharing publicly".to_string(),
+        });
+    }
+    check_xmp_date(text.xmp.as_ref(), &mut findings);
+
     findings
+}
+
+fn check_xmp_date(xmp: Option<&XmpData>, findings: &mut Vec<Finding>) {
+    if let Some(date) = xmp.and_then(|x| x.create_date.as_ref()) {
+        if !xmp::looks_like_date(date) {
+            findings.push(Finding {
+                line: 0,
+                severity: Severity::Error,
+                message: format!(
+                    "XMP date value '{}' does not look like a valid XMP timestamp",
+                    date
+                ),
+            });
+        }
+    }
 }
 
 fn looks_like_exif_datetime(s: &str) -> bool {

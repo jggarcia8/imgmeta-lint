@@ -1,8 +1,15 @@
 // Walks PNG chunks looking for tEXt, zTXt, and iTXt metadata. Fields are
 // numbered in encounter order, same convention as jpeg.rs uses for EXIF
 // fields, so `--dump` line numbers stay meaningful across formats.
+//
+// XMP packets travel in an iTXt chunk under the fixed keyword
+// "XML:com.adobe.xmp" (see the XMP spec, part 3); that one is pulled out
+// and parsed separately rather than dumped as a raw text field.
 
 use crate::inflate;
+use crate::xmp::{self, XmpData};
+
+const XMP_KEYWORD: &str = "XML:com.adobe.xmp";
 
 pub struct TextField {
     pub keyword: String,
@@ -12,6 +19,7 @@ pub struct TextField {
 
 pub struct PngText {
     pub fields: Vec<TextField>,
+    pub xmp: Option<XmpData>,
 }
 
 pub enum ParseError {
@@ -28,6 +36,7 @@ pub fn parse_png(data: &[u8]) -> Result<Option<PngText>, ParseError> {
 
     let mut pos = 8usize;
     let mut fields = Vec::new();
+    let mut xmp = None;
     let mut line = 0usize;
 
     while pos + 8 <= data.len() {
@@ -40,48 +49,37 @@ pub fn parse_png(data: &[u8]) -> Result<Option<PngText>, ParseError> {
         };
         let payload = &data[data_start..data_end];
 
-        match chunk_type {
-            b"tEXt" => {
-                if let Some((keyword, text)) = split_null(payload) {
-                    line += 1;
-                    fields.push(TextField {
-                        keyword: latin1_to_string(keyword),
-                        text: latin1_to_string(text),
-                        line,
-                    });
+        let decoded = match chunk_type {
+            b"tEXt" => split_null(payload)
+                .map(|(keyword, text)| (latin1_to_string(keyword), latin1_to_string(text))),
+            b"zTXt" => split_null(payload).and_then(|(keyword, rest)| {
+                if rest.first() != Some(&0) {
+                    return None;
                 }
-            }
-            b"zTXt" => {
-                if let Some((keyword, rest)) = split_null(payload) {
-                    if rest.first() == Some(&0) {
-                        if let Some(decompressed) = inflate::zlib_decompress(&rest[1..]) {
-                            line += 1;
-                            fields.push(TextField {
-                                keyword: latin1_to_string(keyword),
-                                text: latin1_to_string(&decompressed),
-                                line,
-                            });
-                        }
-                    }
-                }
-            }
-            b"iTXt" => {
-                if let Some((keyword, text)) = parse_itxt(payload) {
-                    line += 1;
-                    fields.push(TextField { keyword, text, line });
-                }
-            }
+                let decompressed = inflate::zlib_decompress(&rest[1..])?;
+                Some((latin1_to_string(keyword), latin1_to_string(&decompressed)))
+            }),
+            b"iTXt" => parse_itxt(payload),
             b"IEND" => break,
-            _ => {}
+            _ => None,
+        };
+
+        if let Some((keyword, text)) = decoded {
+            if keyword == XMP_KEYWORD && xmp.is_none() {
+                xmp = Some(xmp::parse(&text));
+            } else {
+                line += 1;
+                fields.push(TextField { keyword, text, line });
+            }
         }
 
         pos = data_end + 4; // skip the trailing CRC
     }
 
-    if fields.is_empty() {
+    if fields.is_empty() && xmp.is_none() {
         Ok(None)
     } else {
-        Ok(Some(PngText { fields }))
+        Ok(Some(PngText { fields, xmp }))
     }
 }
 
